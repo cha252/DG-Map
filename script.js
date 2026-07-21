@@ -65,11 +65,16 @@ async function loadJobs() {
     markers.forEach(marker => map.removeLayer(marker));
     markers = [];
 
-    const response = await fetch("jobs.csv");
+    const response = await fetch("jobs.xlsx");
+    const buffer = await response.arrayBuffer();
 
-    const csv = await response.text();
+    const workbook = XLSX.read(buffer, {
+        type: "array"
+    });
 
-    const jobs = parseCSV(csv);
+    const sheet = workbook.Sheets["Jobs"];
+
+    const jobs = XLSX.utils.sheet_to_json(sheet);
 
     const bounds = [];
 
@@ -81,19 +86,25 @@ async function loadJobs() {
 
         if (!coords) continue;
 
-        const marker = L.marker([coords.lat, coords.lng])
-            .addTo(map)
-            .bindPopup(`
-                <b>Job:</b> ${job.Job}<br>
-                <b>Site:</b> ${job.Site}<br>
-                <b>Due:</b> ${job["Due Date"]}
-            `);
+        const marker = L.marker([
+            coords.lat,
+            coords.lng
+        ])
+        .addTo(map)
+        .bindPopup(`
+            <b>Job:</b> ${job.Job || ""}<br>
+            <b>Site:</b> ${job.Site || ""}<br>
+            <b>Due:</b> ${job["Due Date"] || ""}
+        `);
 
-        marker.jobId = job.Job.toLowerCase();
+        marker.jobId = String(job.Job || "").toLowerCase();
 
         markers.push(marker);
 
-        bounds.push([coords.lat, coords.lng]);
+        bounds.push([
+            coords.lat,
+            coords.lng
+        ]);
     }
 
     if (bounds.length) {
