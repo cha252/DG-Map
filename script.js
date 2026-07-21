@@ -65,52 +65,67 @@ async function loadJobs() {
     markers.forEach(marker => map.removeLayer(marker));
     markers = [];
 
-    const response = await fetch("jobs.xlsx");
-    const buffer = await response.arrayBuffer();
+    try {
+        const workbookPath = "PN DGs.xlsx";
+        const response = await fetch(workbookPath);
 
-    const workbook = XLSX.read(buffer, {
-        type: "array"
-    });
+        if (!response.ok) {
+            throw new Error(`Could not load ${workbookPath} (${response.status})`);
+        }
 
-    const sheet = workbook.Sheets["Jobs"];
+        const buffer = await response.arrayBuffer();
 
-    const jobs = XLSX.utils.sheet_to_json(sheet);
-
-    const bounds = [];
-
-    for (const job of jobs) {
-
-        if (!job.Site) continue;
-
-        const coords = await geocode(job.Site);
-
-        if (!coords) continue;
-
-        const marker = L.marker([
-            coords.lat,
-            coords.lng
-        ])
-        .addTo(map)
-        .bindPopup(`
-            <b>Job:</b> ${job.Job || ""}<br>
-            <b>Site:</b> ${job.Site || ""}<br>
-            <b>Due:</b> ${job["Due Date"] || ""}
-        `);
-
-        marker.jobId = String(job.Job || "").toLowerCase();
-
-        markers.push(marker);
-
-        bounds.push([
-            coords.lat,
-            coords.lng
-        ]);
-    }
-
-    if (bounds.length) {
-        map.fitBounds(bounds, {
-            padding: [30, 30]
+        const workbook = XLSX.read(buffer, {
+            type: "array"
         });
+
+        const sheetName = workbook.SheetNames.find(name => name.toLowerCase() === "jobs") || workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+
+        if (!sheet) {
+            throw new Error(`Sheet not found: ${sheetName}`);
+        }
+
+        const jobs = XLSX.utils.sheet_to_json(sheet);
+
+        const bounds = [];
+
+        for (const job of jobs) {
+
+            if (!job.Site) continue;
+
+            const coords = await geocode(job.Site);
+
+            if (!coords) continue;
+
+            const marker = L.marker([
+                coords.lat,
+                coords.lng
+            ])
+            .addTo(map)
+            .bindPopup(`
+                <b>Job:</b> ${job.Job || ""}<br>
+                <b>Site:</b> ${job.Site || ""}<br>
+                <b>Due:</b> ${job["Due Date"] || ""}
+            `);
+
+            marker.jobId = String(job.Job || "").toLowerCase();
+
+            markers.push(marker);
+
+            bounds.push([
+                coords.lat,
+                coords.lng
+            ]);
+        }
+
+        if (bounds.length) {
+            map.fitBounds(bounds, {
+                padding: [30, 30]
+            });
+        }
+    } catch (error) {
+        console.error("Unable to load jobs", error);
     }
 }
 
