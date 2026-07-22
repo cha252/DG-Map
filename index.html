@@ -98,13 +98,29 @@
     background: rgba(232, 162, 59, 0.05);
   }
 
+  #upload-zone.loaded {
+    border-style: solid;
+    border-color: var(--teal);
+    background: rgba(79, 184, 168, 0.07);
+  }
+
+  #upload-zone.error {
+    border-style: solid;
+    border-color: var(--red);
+    background: rgba(217, 105, 95, 0.07);
+  }
+
   #upload-zone svg { display:block; margin: 0 auto 10px; opacity: 0.7; }
+  #upload-zone.loaded svg, #upload-zone.error svg { opacity: 1; }
 
   #upload-zone .primary {
     font-size: 13.5px;
     font-weight: 500;
     color: var(--text);
     margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   #upload-zone .secondary {
@@ -112,6 +128,9 @@
     color: var(--text-faint);
     font-family: var(--font-mono);
   }
+
+  #upload-zone.loaded .secondary { color: var(--teal); }
+  #upload-zone.error .secondary { color: var(--red); }
 
   #file-input { display: none; }
 
@@ -164,6 +183,21 @@
     font-size: 11px;
     color: var(--text-dim);
   }
+
+  #clear-cache-btn {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-faint);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    flex-shrink: 0;
+  }
+
+  #clear-cache-btn:hover { color: var(--amber); }
 
   #job-list {
     flex: 1;
@@ -300,13 +334,15 @@
     <div id="brand">
       <div class="mark">JOB SITE MAPPER</div>
       <h1>Plot jobs from a spreadsheet</h1>
-      <p>Upload a workbook with <strong style="color:var(--text)">Job</strong> and <strong style="color:var(--text)">Site</strong> columns. Site values are geocoded and dropped as pins on the map.</p>
+      <p>Upload a workbook with <strong style="color:var(--text)">Job</strong> and <strong style="color:var(--text)">Site</strong> columns. Site addresses are geocoded and dropped as pins on the map. Only sites in the lower North Island are mapped.</p>
     </div>
 
     <div id="upload-zone">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8992a3" stroke-width="1.6"><path d="M12 3v12m0-12l-4 4m4-4l4 4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
-      <div class="primary">Drop spreadsheet or click to browse</div>
-      <div class="secondary">.xlsx · .xls · .csv</div>
+      <svg id="upload-icon-default" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8992a3" stroke-width="1.6"><path d="M12 3v12m0-12l-4 4m4-4l4 4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+      <svg id="upload-icon-loaded" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4fb8a8" stroke-width="1.8" style="display:none"><path d="M20 6L9 17l-5-5"/></svg>
+      <svg id="upload-icon-error" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#d9695f" stroke-width="1.8" style="display:none"><path d="M12 9v4m0 4h.01M10.29 3.86l-8.18 14.18A2 2 0 003.82 21h16.36a2 2 0 001.71-3l-8.18-14.14a2 2 0 00-3.42 0z"/></svg>
+      <div class="primary" id="upload-primary">Drop spreadsheet or click to browse</div>
+      <div class="secondary" id="upload-secondary">.xlsx · .xls · .csv</div>
     </div>
     <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
 
@@ -317,7 +353,10 @@
 
     <div id="list-header">
       <h2>Locations</h2>
-      <span id="list-count"></span>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span id="list-count"></span>
+        <button id="clear-cache-btn" title="Force fresh lookups next time">Clear cache</button>
+      </div>
     </div>
     <div id="job-list">
       <div id="empty-state">No spreadsheet loaded yet. Once you upload one, every mapped job will show up here — click a row to jump to it on the map.</div>
@@ -336,14 +375,43 @@
 (function(){
   const uploadZone = document.getElementById('upload-zone');
   const fileInput = document.getElementById('file-input');
+  const uploadPrimary = document.getElementById('upload-primary');
+  const uploadSecondary = document.getElementById('upload-secondary');
+  const iconDefault = document.getElementById('upload-icon-default');
+  const iconLoaded = document.getElementById('upload-icon-loaded');
+  const iconError = document.getElementById('upload-icon-error');
+
+  function setUploadState(state, primaryText, secondaryText){
+    uploadZone.classList.remove('loaded', 'error');
+    iconDefault.style.display = 'none';
+    iconLoaded.style.display = 'none';
+    iconError.style.display = 'none';
+    if (state === 'loaded'){
+      uploadZone.classList.add('loaded');
+      iconLoaded.style.display = 'block';
+    } else if (state === 'error'){
+      uploadZone.classList.add('error');
+      iconError.style.display = 'block';
+    } else {
+      iconDefault.style.display = 'block';
+    }
+    uploadPrimary.textContent = primaryText;
+    uploadSecondary.textContent = secondaryText;
+  }
   const jobList = document.getElementById('job-list');
   const listCount = document.getElementById('list-count');
+  const clearCacheBtn = document.getElementById('clear-cache-btn');
+  clearCacheBtn.addEventListener('click', () => {
+    clearGeocodeCache();
+    clearCacheBtn.textContent = 'Cache cleared';
+    setTimeout(() => { clearCacheBtn.textContent = 'Clear cache'; }, 1500);
+  });
   const statusBar = document.getElementById('status-bar');
   const statusText = document.getElementById('status-text');
   const progressFill = document.getElementById('progress-fill');
   const hint = document.getElementById('hint');
 
-  const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([20, 0], 2);
+  const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([-40.4, 175.6], 7);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
     maxZoom: 19
@@ -387,6 +455,7 @@
   });
 
   function handleFile(file){
+    setUploadState('default', file.name, 'Reading…');
     const reader = new FileReader();
     reader.onload = function(e){
       try {
@@ -394,11 +463,16 @@
         const wb = XLSX.read(data, { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-        processRows(rows);
+        processRows(rows, file.name);
       } catch(err) {
+        setUploadState('error', file.name, 'Could not read this file');
         hint.textContent = 'Could not read that file. Make sure it\'s a valid .xlsx, .xls, or .csv.';
         hint.style.color = 'var(--red)';
+        hint.style.display = 'block';
       }
+    };
+    reader.onerror = function(){
+      setUploadState('error', file.name, 'Failed to open file');
     };
     reader.readAsArrayBuffer(file);
   }
@@ -412,31 +486,38 @@
     return null;
   }
 
-  function processRows(rows){
+  function processRows(rows, filename){
     if (!rows.length){
+      setUploadState('error', filename, 'File is empty');
       hint.textContent = 'That spreadsheet looks empty.';
       hint.style.color = 'var(--red)';
+      hint.style.display = 'block';
       return;
     }
-    const jobKey = findKey(rows[0], ['job']);
-    const siteKey = findKey(rows[0], ['site']);
+    const jobKey = findKey(rows[0], ['job', 'job id', 'jobid', 'id']);
+    const addrKey = findKey(rows[0], ['site', 'site address', 'street address', 'location', 'address']);
 
-    if (!jobKey || !siteKey){
+    if (!jobKey || !addrKey){
+      setUploadState('error', filename, 'Missing "Job" / "Site" columns');
       hint.textContent = 'Couldn\'t find "Job" and "Site" columns. Check your headers and try again.';
       hint.style.color = 'var(--red)';
+      hint.style.display = 'block';
       return;
     }
 
     jobs = rows
-      .map(r => ({ job: String(r[jobKey]).trim(), address: String(r[siteKey]).trim(), status: 'pending', note: '' }))
+      .map(r => ({ job: String(r[jobKey]).trim(), address: String(r[addrKey]).trim(), status: 'pending', note: '' }))
       .filter(j => j.job && j.address);
 
     if (!jobs.length){
+      setUploadState('error', filename, 'No valid Job/Site rows found');
       hint.textContent = 'No rows with both a Job and a Site were found.';
       hint.style.color = 'var(--red)';
+      hint.style.display = 'block';
       return;
     }
 
+    setUploadState('loaded', filename, jobs.length + ' rows loaded');
     hint.style.display = 'none';
     markersLayer.clearLayers();
     markers = {};
@@ -445,35 +526,103 @@
   }
 
   // ---------- Geocoding (Nominatim, rate-limited to 1 req/sec) ----------
-  const geocodeCache = {};
+  // Results are cached in localStorage so re-mapping the same addresses
+  // later (even in a new browser session) skips the network lookup.
+  // v2: added lower North Island region restriction, so old cached
+  // results (which weren't region-checked) are invalidated.
+  const CACHE_KEY = 'jobSiteMapper.geocodeCache.v2';
+  const geocodeCache = loadCache();
+
+  // Roughly Whanganui / Manawatū / southern Hawke's Bay / Wairarapa /
+  // Wellington / Kapiti Coast. West, South, East, North in lon/lat.
+  const NZ_LOWER_NI_BBOX = { west: 174.2, south: -41.75, east: 177.0, north: -39.1 };
+
+  function inRegion(lat, lng){
+    return lat >= NZ_LOWER_NI_BBOX.south && lat <= NZ_LOWER_NI_BBOX.north &&
+           lng >= NZ_LOWER_NI_BBOX.west && lng <= NZ_LOWER_NI_BBOX.east;
+  }
+
+  function loadCache(){
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch(e){
+      return {};
+    }
+  }
+
+  function saveCache(){
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(geocodeCache));
+    } catch(e){
+      // storage unavailable or full — caching just won't persist, no need to block on it
+    }
+  }
+
+  function cacheKey(address){
+    return address.trim().toLowerCase();
+  }
 
   async function geocodeAddress(address){
-    if (geocodeCache[address]) return geocodeCache[address];
-    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address);
+    const key = cacheKey(address);
+    if (Object.prototype.hasOwnProperty.call(geocodeCache, key)){
+      const cached = geocodeCache[key];
+      const outOfRegion = cached === 'out-of-region';
+      return { result: outOfRegion ? null : cached, fromCache: true, outOfRegion };
+    }
+    const bbox = NZ_LOWER_NI_BBOX;
+    const viewbox = bbox.west + ',' + bbox.north + ',' + bbox.east + ',' + bbox.south;
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=nz'
+      + '&viewbox=' + viewbox + '&bounded=1'
+      + '&q=' + encodeURIComponent(address);
     const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error('geocode request failed');
     const data = await res.json();
-    if (!data.length) return null;
-    const result = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-    geocodeCache[address] = result;
-    return result;
+
+    let result = null;
+    let outOfRegion = false;
+    if (data.length){
+      const lat = parseFloat(data[0].lat);
+      const lng = parseFloat(data[0].lon);
+      if (inRegion(lat, lng)){
+        result = { lat, lng };
+      } else {
+        outOfRegion = true; // shouldn't normally happen since bounded=1 restricts the search, but double-check
+      }
+    }
+
+    geocodeCache[key] = outOfRegion ? 'out-of-region' : result; // cache misses (null/out-of-region) too, so a bad address isn't retried every load
+    saveCache();
+    return { result, fromCache: false, outOfRegion };
+  }
+
+  function clearGeocodeCache(){
+    for (const k in geocodeCache) delete geocodeCache[k];
+    try { localStorage.removeItem(CACHE_KEY); } catch(e){}
   }
 
   function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
   async function geocodeAll(){
     let done = 0;
+    let cacheHits = 0;
     setStatus('Geocoding 0 / ' + jobs.length, 0);
 
     for (let i = 0; i < jobs.length; i++){
       const j = jobs[i];
+      let hitCache = false;
       try {
-        const result = await geocodeAddress(j.address);
+        const { result, fromCache, outOfRegion } = await geocodeAddress(j.address);
+        hitCache = fromCache;
+        if (fromCache) cacheHits++;
         if (result){
           j.status = 'ok';
           j.lat = result.lat;
           j.lng = result.lng;
           addMarker(j);
+        } else if (outOfRegion){
+          j.status = 'failed';
+          j.note = 'Outside lower North Island';
         } else {
           j.status = 'failed';
           j.note = 'Address not found';
@@ -483,13 +632,17 @@
         j.note = 'Lookup failed';
       }
       done++;
-      setStatus('Geocoding ' + done + ' / ' + jobs.length, (done / jobs.length) * 100);
+      setStatus('Geocoding ' + done + ' / ' + jobs.length + (cacheHits ? '  ·  ' + cacheHits + ' from cache' : ''), (done / jobs.length) * 100);
       renderList();
-      if (i < jobs.length - 1) await sleep(1000); // respect Nominatim's 1req/sec usage policy
+      // Only throttle for addresses that actually hit the network — cached
+      // results don't need to respect Nominatim's rate limit.
+      if (!hitCache && i < jobs.length - 1) await sleep(1000);
     }
 
     clearStatus();
     fitToMarkers();
+    const okCount = jobs.filter(j => j.status === 'ok').length;
+    uploadSecondary.textContent = okCount + ' / ' + jobs.length + ' mapped';
   }
 
   function addMarker(j){
