@@ -300,7 +300,7 @@
     <div id="brand">
       <div class="mark">JOB SITE MAPPER</div>
       <h1>Plot jobs from a spreadsheet</h1>
-      <p>Upload a workbook with <strong style="color:var(--text)">Job</strong> and <strong style="color:var(--text)">Address</strong> columns. Addresses are geocoded and dropped as pins on the map.</p>
+      <p>Upload a workbook with <strong style="color:var(--text)">Job</strong> and <strong style="color:var(--text)">Site</strong> columns. Site values are geocoded and dropped as pins on the map.</p>
     </div>
 
     <div id="upload-zone">
@@ -325,7 +325,7 @@
   </div>
 
   <div id="map-wrap">
-    <div id="hint">Waiting for a spreadsheet. Columns needed: <span style="color:var(--text)">Job</span>, <span style="color:var(--text)">Address</span>.</div>
+    <div id="hint">Waiting for a spreadsheet. Columns needed: <span style="color:var(--text)">Job</span>, <span style="color:var(--text)">Site</span>.</div>
     <div id="map"></div>
   </div>
 </div>
@@ -418,21 +418,21 @@
       hint.style.color = 'var(--red)';
       return;
     }
-    const jobKey = findKey(rows[0], ['job', 'job id', 'jobid', 'id']);
-    const addrKey = findKey(rows[0], ['address', 'street address', 'location']);
+    const jobKey = findKey(rows[0], ['job']);
+    const siteKey = findKey(rows[0], ['site']);
 
-    if (!jobKey || !addrKey){
-      hint.textContent = 'Couldn\'t find "Job" and "Address" columns. Check your headers and try again.';
+    if (!jobKey || !siteKey){
+      hint.textContent = 'Couldn\'t find "Job" and "Site" columns. Check your headers and try again.';
       hint.style.color = 'var(--red)';
       return;
     }
 
     jobs = rows
-      .map(r => ({ job: String(r[jobKey]).trim(), address: String(r[addrKey]).trim(), status: 'pending', note: '' }))
+      .map(r => ({ job: String(r[jobKey]).trim(), address: String(r[siteKey]).trim(), status: 'pending', note: '' }))
       .filter(j => j.job && j.address);
 
     if (!jobs.length){
-      hint.textContent = 'No rows with both a Job and an Address were found.';
+      hint.textContent = 'No rows with both a Job and a Site were found.';
       hint.style.color = 'var(--red)';
       return;
     }
