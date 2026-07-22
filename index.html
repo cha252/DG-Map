@@ -137,6 +137,23 @@
 
   #file-input { display: none; }
 
+  #reload-zone {
+    display: none;
+    margin: 0 20px 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+
+  #reload-zone a {
+    color: var(--teal);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+
+  #reload-zone a:hover { color: var(--amber); }
+
   #status-bar {
     margin: 0 20px 14px;
     font-family: var(--font-mono);
@@ -187,7 +204,16 @@
     color: var(--text-dim);
   }
 
-  #clear-cache-btn {
+  #cache-actions {
+    padding: 8px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+
+  .text-btn {
     font-family: var(--font-mono);
     font-size: 10.5px;
     color: var(--text-faint);
@@ -200,7 +226,7 @@
     flex-shrink: 0;
   }
 
-  #clear-cache-btn:hover { color: var(--amber); }
+  .text-btn:hover { color: var(--amber); }
 
   #job-list {
     flex: 1;
@@ -382,6 +408,10 @@
     </div>
     <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
 
+    <div id="reload-zone">
+      Auto-loaded from repo · <a href="#" id="reload-link">reload latest</a>
+    </div>
+
     <div id="status-bar">
       <div id="status-text">Geocoding 0 / 0</div>
       <div id="progress-track"><div id="progress-fill"></div></div>
@@ -389,10 +419,11 @@
 
     <div id="list-header">
       <h2>Locations</h2>
-      <div style="display:flex; align-items:center; gap:10px;">
-        <span id="list-count"></span>
-        <button id="clear-cache-btn" title="Force fresh lookups next time">Clear cache</button>
-      </div>
+      <span id="list-count"></span>
+    </div>
+    <div id="cache-actions">
+      <button id="export-cache-btn" class="text-btn" title="Download geocode-cache.json to commit to the repo">Export cache.json</button>
+      <button id="clear-cache-btn" class="text-btn" title="Force fresh lookups next time (this browser only)">Clear cache</button>
     </div>
     <div id="job-list">
       <div id="empty-state">No spreadsheet loaded yet. Once you upload one, every mapped job will show up here — click a row to jump to it on the map.</div>
@@ -416,6 +447,8 @@
 (function(){
   const uploadZone = document.getElementById('upload-zone');
   const fileInput = document.getElementById('file-input');
+  const reloadZone = document.getElementById('reload-zone');
+  const reloadLink = document.getElementById('reload-link');
   const uploadPrimary = document.getElementById('upload-primary');
   const uploadSecondary = document.getElementById('upload-secondary');
   const iconDefault = document.getElementById('upload-icon-default');
@@ -442,10 +475,16 @@
   const jobList = document.getElementById('job-list');
   const listCount = document.getElementById('list-count');
   const clearCacheBtn = document.getElementById('clear-cache-btn');
+  const exportCacheBtn = document.getElementById('export-cache-btn');
   clearCacheBtn.addEventListener('click', () => {
     clearGeocodeCache();
     clearCacheBtn.textContent = 'Cache cleared';
     setTimeout(() => { clearCacheBtn.textContent = 'Clear cache'; }, 1500);
+  });
+  exportCacheBtn.addEventListener('click', () => {
+    exportGeocodeCache();
+    exportCacheBtn.textContent = 'Downloaded ✓';
+    setTimeout(() => { exportCacheBtn.textContent = 'Export cache.json'; }, 1500);
   });
   const statusBar = document.getElementById('status-bar');
   const statusText = document.getElementById('status-text');
@@ -517,24 +556,79 @@
     setUploadState('default', file.name, 'Reading…');
     const reader = new FileReader();
     reader.onload = function(e){
-      try {
-        const data = new Uint8Array(e.target.result);
-        const wb = XLSX.read(data, { type: 'array' });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-        processRows(rows, file.name);
-      } catch(err) {
-        setUploadState('error', file.name, 'Could not read this file');
-        hint.textContent = 'Could not read that file. Make sure it\'s a valid .xlsx, .xls, or .csv.';
-        hint.style.color = 'var(--red)';
-        hint.style.display = 'block';
-      }
+      parseWorkbookBuffer(e.target.result, file.name);
     };
     reader.onerror = function(){
       setUploadState('error', file.name, 'Failed to open file');
     };
     reader.readAsArrayBuffer(file);
   }
+
+  function parseWorkbookBuffer(buffer, filename){
+    try {
+      const data = new Uint8Array(buffer);
+      const wb = XLSX.read(data, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      processRows(rows, filename);
+    } catch(err) {
+      setUploadState('error', filename, 'Could not read this file');
+      hint.textContent = 'Could not read that file. Make sure it\'s a valid .xlsx, .xls, or .csv.';
+      hint.style.color = 'var(--red)';
+      hint.style.display = 'block';
+    }
+  }
+
+  // ---------- Auto-load from repo ----------
+  // If a spreadsheet with one of these names sits next to this HTML file
+  // (e.g. committed to the same GitHub repo / Pages site), it's loaded
+  // automatically on page load — no upload needed. Requires the page to be
+  // served over http(s) (GitHub Pages, Netlify, `python -m http.server`,
+  // etc.) — browsers block this kind of fetch when opening the file
+  // directly from disk (file://).
+  const AUTO_LOAD_FILENAMES = ['DGS LIST.xlsx', 'DGS LIST.xls', 'DGS LIST.csv'];
+
+  async function tryAutoLoad(){
+    for (const name of AUTO_LOAD_FILENAMES){
+      try {
+        const res = await fetch(encodeURI('./' + name), { cache: 'no-store' });
+        if (!res.ok) continue;
+        const buffer = await res.arrayBuffer();
+        setUploadState('default', name, 'Reading…');
+        parseWorkbookBuffer(buffer, name);
+        showReloadLink(name);
+        return true;
+      } catch(err){
+        // not found, blocked by CORS/file://, or network error — fall through
+      }
+    }
+    return false;
+  }
+
+  function showReloadLink(name){
+    reloadZone.style.display = 'block';
+    reloadLink.dataset.filename = name;
+  }
+
+  reloadLink.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const name = reloadLink.dataset.filename;
+    if (!name) return;
+    reloadLink.textContent = 'reloading…';
+    try {
+      const res = await fetch(encodeURI('./' + name), { cache: 'no-store' });
+      if (res.ok){
+        const buffer = await res.arrayBuffer();
+        setUploadState('default', name, 'Reading…');
+        parseWorkbookBuffer(buffer, name);
+      }
+    } catch(err){
+      // ignore — leave existing data on screen if the re-fetch fails
+    }
+    reloadLink.textContent = 'reload latest';
+  });
+
+  window.addEventListener('DOMContentLoaded', tryAutoLoad);
 
   function findKey(row, candidates){
     const keys = Object.keys(row);
@@ -597,12 +691,19 @@
   }
 
   // ---------- Geocoding (Nominatim, rate-limited to 1 req/sec) ----------
-  // Results are cached in localStorage so re-mapping the same addresses
-  // later (even in a new browser session) skips the network lookup.
+  // Two-layer cache:
+  //  1. geocode-cache.json committed in the repo (shared across everyone —
+  //     loaded fresh on every page load, requires the page served over http(s))
+  //  2. localStorage (this browser only — catches new lookups between exports)
+  // On load, repo entries are merged in wherever localStorage doesn't
+  // already have that address, then any new lookups get saved to
+  // localStorage. Use "Export cache" to download the combined result as
+  // geocode-cache.json and commit it back to the repo to share it.
   // v2: added lower North Island region restriction, so old cached
   // results (which weren't region-checked) are invalidated.
   const CACHE_KEY = 'jobSiteMapper.geocodeCache.v2';
-  const geocodeCache = loadCache();
+  const REPO_CACHE_FILENAME = 'geocode-cache.json';
+  const geocodeCache = loadLocalCache();
 
   // Roughly Whanganui / Manawatū / southern Hawke's Bay / Wairarapa /
   // Wellington / Kapiti Coast. West, South, East, North in lon/lat.
@@ -613,7 +714,7 @@
            lng >= NZ_LOWER_NI_BBOX.west && lng <= NZ_LOWER_NI_BBOX.east;
   }
 
-  function loadCache(){
+  function loadLocalCache(){
     try {
       const raw = localStorage.getItem(CACHE_KEY);
       return raw ? JSON.parse(raw) : {};
@@ -622,7 +723,7 @@
     }
   }
 
-  function saveCache(){
+  function saveLocalCache(){
     try {
       localStorage.setItem(CACHE_KEY, JSON.stringify(geocodeCache));
     } catch(e){
@@ -630,11 +731,29 @@
     }
   }
 
+  // Fetches geocode-cache.json from next to this page (if the repo has one)
+  // and merges any entries not already known locally. Lookups wait on this
+  // so a repo-cached address doesn't trigger a redundant network request.
+  const repoCacheReady = (async function loadRepoCache(){
+    try {
+      const res = await fetch(encodeURI('./' + REPO_CACHE_FILENAME), { cache: 'no-store' });
+      if (res.ok){
+        const repoCache = await res.json();
+        for (const k in repoCache){
+          if (!Object.prototype.hasOwnProperty.call(geocodeCache, k)) geocodeCache[k] = repoCache[k];
+        }
+      }
+    } catch(e){
+      // not found, blocked by CORS/file://, or invalid JSON — just fall back to localStorage only
+    }
+  })();
+
   function cacheKey(address){
     return address.trim().toLowerCase();
   }
 
   async function geocodeAddress(address){
+    await repoCacheReady;
     const key = cacheKey(address);
     if (Object.prototype.hasOwnProperty.call(geocodeCache, key)){
       const cached = geocodeCache[key];
@@ -663,13 +782,25 @@
     }
 
     geocodeCache[key] = outOfRegion ? 'out-of-region' : result; // cache misses (null/out-of-region) too, so a bad address isn't retried every load
-    saveCache();
+    saveLocalCache();
     return { result, fromCache: false, outOfRegion };
   }
 
   function clearGeocodeCache(){
     for (const k in geocodeCache) delete geocodeCache[k];
     try { localStorage.removeItem(CACHE_KEY); } catch(e){}
+  }
+
+  function exportGeocodeCache(){
+    const blob = new Blob([JSON.stringify(geocodeCache, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = REPO_CACHE_FILENAME;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
